@@ -1,0 +1,12 @@
+[
+  {
+    "id": "runner",
+    "name": "runner",
+    "url": "https://github.com/AramManukyan/Runner.git",
+    "defaultBranch": "main",
+    "allowedBranches": ["main"],
+    "allowedPhases": ["setup", "test"],
+    "setupCommands": ["npm install"],
+    "testCommands": ["npm test"]
+  }
+]
