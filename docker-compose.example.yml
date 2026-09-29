@@ -1,0 +1,22 @@
+# Example deployment. Put secrets into .env (never commit it).
+services:
+  runner:
+    build: .
+    env_file: .env
+    ports: ["8787:8787"]
+    read_only: true
+    tmpfs: ["/tmp:size=512m"]
+    volumes:
+      - ./config/repos.json:/config/repos.json:ro
+      - runner-data:/data
+      - runner-work:/work
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 512
+    mem_limit: 4g
+    cpus: 2
+    # Recommended: runtime: runsc   (gVisor) for kernel-level isolation of agent/test processes.
+    # Never mount /var/run/docker.sock.
+volumes:
+  runner-data:
+  runner-work:
