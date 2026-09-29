@@ -29,6 +29,18 @@ export function run(
   opts: { cwd: string; timeoutMs: number; maxBytes: number; signal?: AbortSignal; env?: Record<string, string>; redact?: string[] },
 ): Promise<ExecResult> {
   const started = Date.now();
+  if (!Array.isArray(argv) || argv.length === 0 || argv.some((argument) => typeof argument !== "string") || !argv[0]) {
+    return Promise.resolve({
+      command: Array.isArray(argv) ? argv.map(String).join(" ") : String(argv),
+      exitCode: null,
+      signal: null,
+      stdout: "",
+      stderr: "argv must be a non-empty array of strings",
+      truncated: false,
+      durationMs: Date.now() - started,
+      timedOut: false,
+    });
+  }
   return new Promise((resolve) => {
     const [cmd, ...args] = argv;
     const child = spawn(cmd!, args, { cwd: opts.cwd, env: opts.env ?? sandboxEnv(), shell: false, stdio: ["ignore", "pipe", "pipe"] });

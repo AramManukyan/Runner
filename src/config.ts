@@ -53,6 +53,13 @@ export function loadSettings(): RunnerSettings {
   for (const r of repos) {
     if (!/^[A-Za-z0-9._-]{1,100}$/.test(r.id)) throw new Error(`Invalid repository id ${r.id}`);
     if (!/^https:\/\//.test(r.url)) throw new Error(`Repository ${r.id}: only https URLs are allowed`);
+    for (const [field, commands] of [["setupCommands", r.setupCommands], ["testCommands", r.testCommands]] as const) {
+      if (commands !== undefined && (!Array.isArray(commands) || commands.some((command) =>
+        !Array.isArray(command) || command.length === 0 || command.some((argument) => typeof argument !== "string")
+      ))) {
+        throw new Error(`Repository ${r.id}: ${field} must be an array of non-empty argv arrays`);
+      }
+    }
   }
   return {
     port: Number(process.env.PORT ?? 8787),
