@@ -50,7 +50,7 @@ curl -H "Authorization: Bearer $RUNNER_API_KEY" https://runner.example.com/healt
 
 ## Тесты
 ```bash
-npm install && npm test
+npm install && npm test   # uses tsx --test; do not run with `bun test` (unsupported runner)
 ```
 Тесты — mock-уровень: настоящий HTTP-сервер, git, команды тестов, но **фиктивный драйвер агента** (без вызова Anthropic).
 Если окружение запрещает git-запись, тесты полного цикла помечаются SKIP.

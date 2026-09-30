@@ -234,7 +234,12 @@ export class JobManager {
     const repo = s.repos.find((r) => r.id === job.request.repositoryId)!;
     const ctrl = new AbortController();
     this.controllers.set(job.id, ctrl);
-    const deadline = setTimeout(() => ctrl.abort(new Error("timeout")), job.request.timeLimitSec * 1000);
+    let deadlineHit = false;
+    const deadline = setTimeout(() => {
+      deadlineHit = true;
+      ctrl.abort(new Error("timeout"));
+    }, job.request.timeLimitSec * 1000);
+
     const heartbeat = setInterval(() => this.setStatus(job, job.status), 30_000);
     const dir = join(s.workRoot, job.id);
     const started = Date.now();
@@ -298,13 +303,19 @@ export class JobManager {
       });
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
-      const timedOut = reason === "timeout";
+      // The time limit aborts the running child process, so the surfacing error is
+      // usually the command failure, not "timeout" — classify by the deadline flag.
+      const reasonIsTimeout =
+        (ctrl.signal.reason instanceof Error && ctrl.signal.reason.message === "timeout") || ctrl.signal.reason === "timeout";
+      const timedOut = deadlineHit || reason === "timeout" || reasonIsTimeout;
       const cancelled = job.status === "cancelling" && !timedOut;
-      this.finish(job, timedOut ? "timed_out" : cancelled ? "cancelled" : "failed", cancelled ? null : reason, {
-        status: "failed", summary: null, baseCommit, branch, changedFiles: [], diff: null, artifactUrl: null,
+      const finalStatus: JobStatus = timedOut ? "timed_out" : cancelled ? "cancelled" : "failed";
+      this.finish(job, finalStatus, cancelled ? null : reason, {
+        status: finalStatus, summary: null, baseCommit, branch, changedFiles: [], diff: null, artifactUrl: null,
         setupResults: [], testResults: [], errors: cancelled ? [] : [reason], durationMs: Date.now() - started,
         budget: job.request.budget ?? null, budgetExceeded: false, usage: null,
       });
+
     } finally {
       clearTimeout(deadline);
       clearInterval(heartbeat);

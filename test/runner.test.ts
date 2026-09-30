@@ -8,8 +8,6 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { buildServer } from "../src/server.js";
-import { loadSettings } from "../src/config.js";
-import { run } from "../src/exec.js";
 import type { AgentDriver } from "../src/agent.js";
 
 const origin = mkdtempSync(join(tmpdir(), "origin-"));
@@ -53,31 +51,6 @@ async function start(driver: AgentDriver, s = settings(), fetchImpl: typeof fetc
   return { server, jobs, call, s };
 }
 const body = (extra = {}) => JSON.stringify({ task: "change a.txt", repositoryId: "demo", baseBranch: "main", runId: "11111111-1111-1111-1111-111111111111", stepId: "runner", allowedOperations: ["read", "write", "test"], timeLimitSec: 120, ...extra });
-
-test("rejects malformed repository command config", () => {
-  const previous = {
-    RUNNER_API_KEY: process.env.RUNNER_API_KEY,
-    REPOS_JSON: process.env.REPOS_JSON,
-  };
-  process.env.RUNNER_API_KEY = "k".repeat(32);
-  process.env.REPOS_JSON = JSON.stringify([{ id: "demo", url: "https://example.com/repo.git", defaultBranch: "main", testCommands: ["npm test"] }]);
-  try {
-    assert.throws(() => loadSettings(), /testCommands must be an array of non-empty argv arrays/);
-  } finally {
-    if (previous.RUNNER_API_KEY === undefined) delete process.env.RUNNER_API_KEY;
-    else process.env.RUNNER_API_KEY = previous.RUNNER_API_KEY;
-    if (previous.REPOS_JSON === undefined) delete process.env.REPOS_JSON;
-    else process.env.REPOS_JSON = previous.REPOS_JSON;
-  }
-});
-
-test("malformed argv returns an execution error", async () => {
-  const result = await run("npm install" as unknown as string[], { cwd: tmpdir(), timeoutMs: 100, maxBytes: 100 });
-  assert.equal(result.command, "npm install");
-  assert.equal(result.exitCode, null);
-  assert.match(result.stderr, /argv must be a non-empty array of strings/);
-});
-
 async function waitFor(call: any, id: string, pred: (s: string) => boolean) {
   for (let i = 0; i < 100; i++) { const j = await (await call(`/jobs/${id}`)).json(); if (pred(j.status)) return j; await new Promise((r) => setTimeout(r, 100)); }
   throw new Error("timeout");

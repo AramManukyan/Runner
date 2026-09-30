@@ -65,7 +65,11 @@ export const claudeAgentSdkDriver: AgentDriver = {
     let usage: AgentUsage | null = null;
     let error: string | undefined;
     let budgetExceeded = false;
-    let spentTokens = 0;
+    // input_tokens is the whole conversation context on every turn, so summing it
+    // over-counts. Track the largest context seen plus the sum of produced tokens.
+    let maxInputTokens = 0;
+    let outputTokens = 0;
+
     const stream = query({
       prompt,
       options: {
@@ -80,37 +84,61 @@ export const claudeAgentSdkDriver: AgentDriver = {
         env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: "/tmp/jobhome", ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "" },
       } as any,
     });
-    for await (const msg of stream as AsyncIterable<any>) {
-      if (msg.type === "assistant") {
-        for (const block of msg.message?.content ?? []) if (block.type === "text") log(`[agent] ${String(block.text).slice(0, 500)}`);
-        const mu = msg.message?.usage ?? {};
-        spentTokens += (mu.input_tokens ?? 0) + (mu.output_tokens ?? 0);
-        if (budget.maxTokens && spentTokens > budget.maxTokens && !budgetExceeded) {
-          budgetExceeded = true;
-          error = `token budget exceeded (${spentTokens} > ${budget.maxTokens})`;
-          log(`[budget] ${error}; stopping agent`);
-          abortController.abort();
-        }
-      } else if (msg.type === "result") {
-        summary = msg.result ?? summary;
-        if (msg.subtype !== "success" && !budgetExceeded) error = `agent finished: ${msg.subtype}`;
-        const u = msg.usage ?? {};
-        usage = {
-          provider: "anthropic",
-          model,
-          inputTokens: u.input_tokens ?? null,
-          outputTokens: u.output_tokens ?? null,
-          cacheReadTokens: u.cache_read_input_tokens ?? null,
-          cacheWriteTokens: u.cache_creation_input_tokens ?? null,
-          costUsd: typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : null,
-        };
-        if (budget.maxCostUsd && usage.costUsd != null && usage.costUsd > budget.maxCostUsd) {
-          budgetExceeded = true;
-          error = `cost budget exceeded (${usage.costUsd} > ${budget.maxCostUsd} USD)`;
-          log(`[budget] ${error}`);
+    try {
+      for await (const msg of stream as AsyncIterable<any>) {
+        if (msg.type === "assistant") {
+          for (const block of msg.message?.content ?? []) if (block.type === "text") log(`[agent] ${String(block.text).slice(0, 500)}`);
+          const mu = msg.message?.usage ?? {};
+          maxInputTokens = Math.max(maxInputTokens, Number(mu.input_tokens ?? 0) || 0);
+          outputTokens += Number(mu.output_tokens ?? 0) || 0;
+          const spentTokens = maxInputTokens + outputTokens;
+          if (budget.maxTokens && spentTokens > budget.maxTokens && !budgetExceeded) {
+            budgetExceeded = true;
+            error = `token budget exceeded (${spentTokens} > ${budget.maxTokens})`;
+            log(`[budget] ${error}; stopping agent`);
+            abortController.abort();
+          }
+        } else if (msg.type === "result") {
+          summary = msg.result ?? summary;
+          if (msg.subtype !== "success" && !budgetExceeded) error = `agent finished: ${msg.subtype}`;
+          const u = msg.usage ?? {};
+          usage = {
+            provider: "anthropic",
+            model,
+            inputTokens: u.input_tokens ?? null,
+            outputTokens: u.output_tokens ?? null,
+            cacheReadTokens: u.cache_read_input_tokens ?? null,
+            cacheWriteTokens: u.cache_creation_input_tokens ?? null,
+            costUsd: typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : null,
+          };
+          if (budget.maxCostUsd && usage.costUsd != null && usage.costUsd > budget.maxCostUsd) {
+            budgetExceeded = true;
+            error = `cost budget exceeded (${usage.costUsd} > ${budget.maxCostUsd} USD)`;
+            log(`[budget] ${error}`);
+            abortController.abort();
+          }
         }
       }
+    } catch (e) {
+      // Stopping the agent for budget reasons aborts the stream; that is an expected
+      // end of work, not a failure — keep the produced changes and report the budget stop.
+      if (budgetExceeded) {
+        log("[budget] agent stream stopped after budget limit");
+      } else if (signal.aborted) {
+        throw e; // job-level cancel/timeout: handled by the caller
+      } else {
+        error = e instanceof Error ? e.message : String(e);
+        log(`[agent] stream error: ${error}`);
+      }
+    }
+    if (!usage && (maxInputTokens || outputTokens)) {
+      usage = {
+        provider: "anthropic", model,
+        inputTokens: maxInputTokens || null, outputTokens: outputTokens || null,
+        cacheReadTokens: null, cacheWriteTokens: null, costUsd: null,
+      };
     }
     return { summary, usage, budgetExceeded, ...(error ? { error } : {}) };
+
   },
 };
